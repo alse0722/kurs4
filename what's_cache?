@@ -1,0 +1,108 @@
+sites:
+    https://habr.com/ru/articles/428127/ -- Nginx cache: всё новое — хорошо забытое старое
+
+С использованием кэширования приложение сгенерирует страницу один раз и сохранит результат в память на какое-то время (называемое TTL). 
+Пока не истечет TTL, клиент будет получать сохраненную в памяти версию страницы. Давайте разберемся с настройкой кэширования на Nginx!
+
+Для включения кэширования в Nginx сначала необходимо определить максимальный размер кеша (общий размер всех страниц в кеше не может превышать это значение). Сделать это можно в конфигурационном файле /etc/nginx/nginx.conf с помощью директивы в секции http:
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=all:32m;
+
+Не забываем создать каталог для кеширования, который мы указали выше:
+    # mkdir /var/cache/nginx
+
+Далее следует изменить настройки сайта, создав еще одну секцию server. 
+Переносим наш основной сервер на другой порт (например, 81), а на стандартном 80 у нас теперь будет работать кэширующий хост, который либо будет отдавать данные из кэша, либо перенаправлять запросы на основной хост. Это может выглядеть примерно так:
+    server {  
+            listen 80;
+
+            location / {
+                    proxy_pass http://127.0.0.1:81/;
+                    proxy_cache all;
+                    proxy_cache_valid any 1h; # Кешируем на 1 час 
+            }
+    }
+
+Для основного сервера:
+    server {  
+            listen 81;
+
+            location / {
+                    try_files $uri $uri/ /index.php?$query_string;
+            }
+
+            location = /favicon.ico { access_log off; log_not_found off; }
+            location = /robots.txt  { access_log off; log_not_found off; }
+
+            #access_log off;
+            access_log /var/log/nginx/letsclearitup.access.log;
+            error_log  /var/log/nginx/letsclearitup.error.log error;
+
+            location ~ \.php$ {
+                    fastcgi_split_path_info ^(.+\.php)(/.+)$;
+                    include fastcgi_params;
+                    fastcgi_index index.php;
+                    fastcgi_param  SCRIPT_FILENAME    $document_root$fastcgi_script_name;
+                    fastcgi_pass unix:/run/php/letsclearitup.sock;
+                    fastcgi_hide_header X-Powered-By;
+            }
+
+            location /status {
+                    fastcgi_pass unix:/run/php/letsclearitup.sock;
+                    include fastcgi.conf;
+                    allow 127.0.0.1;
+                    deny all;
+            }
+    }
+
+Если у пользователя установлены какие-либо Cookies, кэширование можно отключить:
+    server {  
+            listen 80;
+
+            location / {
+                    if ($http_cookie ~* ".+" ) {
+                            set $do_not_cache 1;
+                    }
+                    proxy_pass http://127.0.0.1:81/;
+                    proxy_cache all;
+                    proxy_cache_valid any 1h; # Кешируем на 1 час 
+            }
+    }
+
+Есть смысл включать кэширование также и для ошибочных запросов, чтобы снизить нагрузку от обращений к неработающей части сайта:
+    server {  
+            listen 80;
+
+            location / {
+                    if ($http_cookie ~* ".+" ) {
+                            set $do_not_cache 1;
+                    }
+                    proxy_pass http://127.0.0.1:81/;
+                    proxy_cache all;
+                    proxy_cache_valid 404 502 503 1m;
+                    proxy_cache_valid any 1h; # Кешируем на 1 час 
+            }
+    }
+
+У Nginx есть возможность кеширования ответов от fastcgi. Чтобы использовать данную возможность, в секции http файла /etc/nginx/nginx.conf добавляем:
+    fastcgi_cache_path /var/cache/fpm levels=1:2 keys_zone=fcgi:100m;  
+    fastcgi_cache_key "$scheme$request_method$host$request_uri";
+
+Создаем каталог:
+    # mkdir /var/cache/fpm
+
+После чего в настройках сайта (в секции server для основного хоста) добавим такие строки:
+    server {  
+            listen 81;
+    ...
+            location ~ \.php$ {
+                    fastcgi_split_path_info ^(.+\.php)(/.+)$;
+                    include fastcgi_params;
+                    fastcgi_index index.php;
+                    fastcgi_param  SCRIPT_FILENAME    $document_root$fastcgi_script_name;
+                    fastcgi_pass unix:/run/php/letsclearitup.sock;
+                    fastcgi_hide_header X-Powered-By;
+                    fastcgi_cache fcgi;
+                    fastcgi_cache_valid 200 60m; # кешировать ответы с кодом 200 на 1 час 
+            }
+    ...
+    }

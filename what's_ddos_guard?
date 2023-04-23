@@ -1,0 +1,24 @@
+site:
+    https://nginx.org/ru/docs/http/ngx_http_limit_req_module.html
+
+ngx_http_limit_req_module - модуль для конфигурации http соединений
+
+Модуль ngx_http_limit_req_module (0.7.21) позволяет ограничить скорость обработки запросов по заданному ключу или, как частный случай, скорость обработки запросов, поступающих с одного IP-адреса. 
+Ограничение обеспечивается с помощью метода “leaky bucket”.
+
+Пример конфигурации
+
+http {
+    limit_req_zone $binary_remote_addr zone=one:10m rate=1r/s;
+
+    ...
+
+    server {
+
+        ...
+
+        location /search/ {
+            limit_req zone=one burst=5;
+        }
+    }
+}

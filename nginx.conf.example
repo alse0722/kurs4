@@ -1,0 +1,42 @@
+events {}
+
+http {
+
+    include mime.types; //добавляет хедеры для обработки htmp, css и тд
+
+    server {
+        listen 80;                      //порт
+        server_name localhost;          //домен
+        root /sites/boostrap;           //корневая папка сайта
+
+        location /test{
+            return 200 'Hello from nginx location block!'; //совпадение префикса
+        }
+
+        location = /test{
+            return 200 'Hello from nginx location block!'; //конкретная ссылка
+        }
+
+        location ~ /test[0-9]{
+            return 200 'Hello from nginx location block!'; //совпадение с чувствительностью регистра
+        }
+
+        location *~ /test[0-9]{
+            return 200 'Hello from nginx location block!'; //совпадение с нечувствительностью регистра
+        }
+
+        location ^~ /test[0-9]{
+            return 200 'Hello from nginx location block!'; //совпадение с префиксом преимущества
+        }
+
+        location /downloads{
+            root /sites;
+            try_files $uri =404; //поиску за пределами исходной директории
+        }
+
+        location /test_logs{
+            error_log /var/log/nginx/test_logs.error.log debug; //пример логирования wiki.nginx.org
+        }
+
+    }
+}

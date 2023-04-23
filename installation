@@ -1,0 +1,29 @@
+sites:
+    https://www.youtube.com/playlist?list=PLhgRAQ8BwWFa7ulOkX0qi5UfVizGD_-Rc
+    https://www.youtube.com/watch?v=gSPOI6-ydU4&list=PLhgRAQ8BwWFa7ulOkX0qi5UfVizGD_-Rc&index=6&ab_channel=GeekCode
+
+for ubuntu 14.10 x64
+    //установка
+        apt-get install nginx
+        ls -l /etc/nginx
+
+    //проверить работу сервера
+        service nginx status
+        service nginx start
+
+    //добавить сервис
+        initscript
+        cd /etc/init.d
+        wget {initscript}
+        sudo chmod +x nginx
+    (если изменена дефолтная директория необходимо поменять файл nginx.conf)
+        echo "NGINX_CONF_FILE=/etc/nginx/nginx.conf" > /etc/default/nginx
+        echo "DAEMON=/usr/bin/nginx" >> /etc/default/nginx
+        service nginx status
+        service nginx start
+        update-rc.d -f nginx default
+
+host:
+    https://www.youtube.com/watch?v=YDYblioxbqQ&list=PLhgRAQ8BwWFa7ulOkX0qi5UfVizGD_-Rc&index=9&ab_channel=GeekCode
+    взять шаблон можно с bootstrap
+

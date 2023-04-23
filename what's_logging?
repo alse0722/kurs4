@@ -1,0 +1,29 @@
+site:
+    https://ixnfo.com/nastroyka-logov-nginx.html
+
+Чтобы изменить настройки логов, откроем файл конфигурации nginx в любом текстовом редакторе:
+    sudo nano /etc/nginx/nginx.conf
+
+Вероятно там будут записи:
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+Для логов ошибок можно указать уровень записываемой информации (где вместо LEVEL укажем любое из: emerg, alert, crit, error, warn, notice, info, debug):
+    error_log /var/log/nginx/error.log LEVEL;
+
+Например чтобы увеличить логи ошибок до уровня отладки:
+    error_log /var/log/nginx/error.log debug;
+
+Чтобы не писать логи ошибок, можно направить их в /dev/null:
+    error_log /dev/null crit;
+
+Чтобы не писать логи доступа, просто укажем:
+    access_log off;
+
+Логи доступа можно настроить под любой формат, например писать только дату и IP адрес:
+    log_format small '$remote_addr - $remote_user [$time_local]';
+    access_log /var/log/nginx/access.log small;
+
+Или более детальные:
+    log_format myformat '$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"';
+    access_log /var/log/nginx/access.log myformat;

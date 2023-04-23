@@ -1,0 +1,86 @@
+sites:
+    https://habr.com/ru/articles/139931/ -- модуль nginx для защиты от ddos
+    https://amkolomna.ru/content/zashchita-nginx-ot-ddos-atak -- Защита nginx от DDoS атак
+    https://rudocs.ispmanager.com/ispmanager-lite/nastrojka-zashchity-ot-ddos-atak -- Настройка защиты от DDoS-атак
+
+Для работы защиты используется модуль ngx_http_limit_req_module, который позволяет ограничить скорость обработки запросов по заданному ключу или запросов, поступающих с одного IP-адреса.
+
+Принципы работы модуля
+Модуль для каждого домена с включённой защитой создаёт зону разделяемой памяти (zone) и указывает максимальный размер всплеска запросов (burst). Если количество поступающих запросов превышает ограничение для зоны, то их обработка задерживается. Избыточные запросы задерживаются, пока их количество не превысит максимальный размер всплеска. При его превышении запрос завершается с ошибкой 503 (Service Temporarily Unavailable).
+
+Настройки записываются в <путь к директории Nginx>/conf.d/isplimitreq.conf:
+    limit_req_zone $binary_remote_addr zone=<имя WWW-домена>:<размер зоны> rate=<количество запросов в секунду>r/s
+пояснение:
+    Размер зоны рассчитывается по формуле:
+        <количество запросов в секунду> * 64k
+    Например, если Количество запросов в секунду = 500, то размер зоны будет равен 500 * 64k, т.е. 32000k.
+
+А также в <путь к директории Nginx>/vhosts-resources/<имя домена>:
+    limit_req zone=<имя WWW-домена> burst=<максимальный размер всплеска>;
+    error_page 503 =429 @blacklist;
+пояснение:
+    @blacklist — секция location, в которую выполняется перенаправление при срабатывании ошибки 503, т.е. при превышении максимального количества запросов с IP-адреса.
+
+Секция location @blacklist создаётся в <путь к директории Nginx>/vhosts-includes/blacklist-nginx.conf с содержимым вида:
+    location @blacklist {
+    proxy_redirect off ;
+    proxy_pass https://<IP-адрес>:<порт>;
+    rewrite (.*) /mancgi/ddos break;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X_ISP_FIREWALLSEC <ключ для ISPmanager>;
+пояснение:
+    <IP-адрес> — адрес сервера с ISPmanager, который слушает ihttpd. Если ihttpd слушает любой корректный адрес сервера, то IP-адрес выбирается произвольно.
+    <порт> — порт, который слушает ihttpd.
+
+Подробнее о модуле ngx_http_limit_req_module -- https://nginx.org/ru/docs/http/ngx_http_limit_req_module.html
+
+Блокировка IP-адресов
+
+При превышении максимального количества запросов:
+
+1 IP-адрес, с которого они поступают, передаётся в скрипт /mancgi/ddos. Скрипт вносит адрес в список заблокированных на 5 минут.
+
+2 Блокировка выполняется с помощью iptables для IPv4, ip6tables для IPv6 и ipset.
+
+    В iptables создаётся правило:
+        DROP       all  --  anywhere             anywhere            match-set ispmgr_limit_req src 
+
+    В ip6tables создаётся правило:
+        DROP       all  --  anywhere             anywhere            match-set ispmgr_limit_req6 src 
+
+    В ipset создаются два набора (ispmgr_limit_req и ispmgr_limit_req6) с параметрами: hash:ip (IP-адрес) и timeout 300 (время блокировки в секундах).
+
+3 При блокировке в журнал /usr/local/mgr5/var/ddos.log добавляется запись:
+    WARNING Address (<IP-адрес>) is blacklisted
+
+4 Чтобы проверить содержимое списка, выполните команду:
+    ipset -L ispmgr_limit_req
+
+    В выводе команды в поле "Members" указываются все адреса из списка блокировки и время до её окончания.
+
+Изменение периода блокировки
+Чтобы изменить период, на который блокируются IP-адреса:
+
+1 Добавьте в конфигурационном файле ISPmanager (по умолчанию /usr/local/mgr5/etc/ispmgr.conf) параметр:
+    isp_limitreq_timeout <период блокировки в секундах>
+
+2 Определите в iptables номер правила ispmgr_limit_req src:
+    iptables -L INPUT --line-number
+
+3 Удалите это правило:
+    iptables -D INPUT <номер правила>
+
+4 Определите в ip6tables номер правила ispmgr_limit_req6 src:
+    ip6tables -L INPUT --line-number
+
+5 Удалите это правило:
+    ip6tables -D INPUT <номер правила>
+
+6 Удалить правила из ipset:
+    ipset destroy ispmgr_limit_req
+    ipset destroy ispmgr_limit_req6
+
+7 Обновите правила брандмауэра ISPmanager:
+    /usr/local/mgr5/sbin/mgrctl -m ispmgr firewall
