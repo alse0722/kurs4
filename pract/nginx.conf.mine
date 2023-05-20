@@ -1,0 +1,183 @@
+
+events {
+    worker_connections  1024;
+}
+
+
+http {
+    include             mime.types;
+    include             fastcgi_params;
+    include             fastcgi.conf;
+    default_type        application/octet-stream;
+
+    #default headers
+    add_header Access-Control-Allow-Origin;
+    add_header Caching $upstream_cache_status;
+    add_header Cache-Control public;
+    add_header Vary Accept-Encoding;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+
+    #log formatting
+    log_format upstream_time '$remote_addr - $remote_user [$time_local] '
+                             '"$request" $status $body_bytes_sent '
+                             '"$http_referer" "$http_user_agent"'
+                             'rt=$request_time uct="$upstream_connect_time" uht="$upstream_header_time" urt="$upstream_response_time"';
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    #limit concurrency
+        limit_conn_zone $server_name zone=per_vhost:5m;
+        limit_conn_zone $binary_remote_addr zone=per_ip:5m;
+
+    #fastCGI
+        fastcgi_cache_path /etc/nginx/cache levels=1:2 keys_zone=microcache:10m max_size=500m inactive=10m;
+        fastcgi_cache_key "$scheme$request_method$host$request_uri";
+        fastcgi_ignore_headers Cache-Control Expires Set-Cookie ;
+    
+    #load balancer
+        upstream php_servers {
+            least_conn;
+            server localhost:10001;
+            server localhost:10002;
+            server localhost:10003;
+        }
+
+    #geoip
+    geoip2 /usr/share/GeoIP/GeoLite2-City.mmdb {
+       auto_reload 60m;
+       $geoip2_metadata_city_build metadata build_epoch;
+       $geoip2_data_country_name country names en;
+       $geoip2_data_country_code country iso_code;
+       $geoip2_data_city_name city names en;
+       $geoip2_data_region_name subdivisions 0 names en;
+       $geoip2_data_state_code  subdivisions 0 iso_code;
+    }
+
+    #geoip blocking
+    map "$geoip2_data_country_code:$geoip2_data_state_code" $allowed_reg {
+        default no;
+        ~^RU: yes; #Россия
+        ~^BY: yes; #Белоруссия
+        ~^AM: yes; #Армения
+        ~^KZ: yes; #Казахстан
+        ~^KG: yes; #Кыргызстан
+        UA:40 yes; #Севастополь
+        UA:43 yes; #Крым
+        UA:14 yes; #Донецкая область
+        UA:09 yes; #Луганская область
+        UA:23 yes; #Запорожская область
+        UA:65 yes; #Херсонская область
+        GE:AB yes; #Абхазия
+    }
+
+    server {
+        
+        #main
+        listen       81;
+        listen       443 ssl;
+
+        allow   192.168.0.174;
+        deny all;
+
+        server_name  localhost;
+
+        #site folder
+        root /etc/nginx/site/gaming/;
+
+        #base logs on/off
+        error_log off;
+        access_log off;
+        #access_log  logs/host.access_base.log  main;
+        #error_log  logs/host.error_base.log  main;
+
+        #ssl
+        ssl_certificate /etc/nginx/ssl/nginx.crt;
+        ssl_certificate_key /etc/nginx/ssl/nginx.key;
+        ssl_session_cache    shared:SSL:1m;
+        ssl_session_timeout     5m;
+        ssl_ciphers  HIGH:!aNULL:!MD5;
+        ssl_prefer_server_ciphers  on;
+
+        #buffer sizes
+        client_body_buffer_size 16k;
+        client_header_buffer_size 1k;
+        client_max_body_size 8m;
+        large_client_header_buffers 2 1k;
+
+        #timeouts
+        client_body_timeout 12;
+        client_header_timeout 12;
+
+        #keepalive
+        keepalive_timeout 65;
+        send_timeout 10;
+
+        #server version info off
+        server_tokens off;
+
+        #gzip
+        gzip on;
+        gzip_min_length 100;
+        gzip_comp_level 3;
+
+        gzip_types text/plain;
+        gzip_types text/css;
+        gzip_types text/javascript;
+
+        gzip_disable "msie6";
+
+        #caching
+        set $no_cache 0;
+        if ($request_method = POST) { set $no_cache 1; }
+        if ($query_string != "") { set $no_cache 1; }
+        if ($request_uri ~* "/profile") { set $no_cache 1; }
+
+        #Block forbidden country
+        if ($allowed_reg = no) {
+            return 444;
+        }
+
+        #test locations
+        #location / {
+        #    index  index.html index.htm;
+        #}
+
+        location /test_auth {
+            #base auth
+            auth_basic "Restricted access";
+            auth_basic_user_file /etc/nginx/creds/.htpasswd;
+            access_log /var/log/nginx/new.log upstream_time;
+        }
+
+        location ~* \.(css|js|jpg|png|gif)$ {
+            
+            fastcgi_cache microcache;
+            fastcgi_cache_valid 200 60m;
+            expires 1M;
+
+            access_log off;
+            error_log off;
+
+            limit_conn per_ip 1;
+        }
+
+        location /test_balancer {
+            fastcgi_cache microcache;
+            fastcgi_cache_valid 200 60m;
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_no_cache $no_cache;
+
+            proxy_set_header proxy_header_to_server nginx;
+            add_header proxy_header nginx;
+
+            proxy_pass http://php_servers;
+        }
+        
+        location ~ /\.ht {
+            deny  all;
+        }
+    }
+}
